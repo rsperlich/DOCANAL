@@ -1,215 +1,494 @@
+from pathlib import Path
+
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 
 
 def load_and_split_image(image_path):
+    """
+    Loads a color image and splits it into its RGB channels.
+
+    Args:
+        image_path (str): Path to the image file.
+
+    Returns:
+        tuple: A tuple containing the Red, Green, and Blue channels as NumPy arrays, and the original RGB image.
+    """
     image = cv2.imread(image_path)
     image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     R, G, B = cv2.split(image_rgb)
     return R, G, B, image_rgb
 
+def display_channels(R, G, B):
+    """
+    Displays the individual Red, Green, and Blue channels of an image.
+
+    Args:
+        R (NumPy array): Red channel.
+        G (NumPy array): Green channel.
+        B (NumPy array): Blue channel.
+    """
+    plt.figure(figsize=(12, 4))
+    plt.subplot(1, 3, 1)
+    plt.title('Red Channel')
+    plt.imshow(R, cmap='gray')
+    plt.axis('off')
+    plt.subplot(1, 3, 2)
+    plt.title('Green Channel')
+    plt.imshow(G, cmap='gray')
+    plt.axis('off')
+    plt.subplot(1, 3, 3)
+    plt.title('Blue Channel')
+    plt.imshow(B, cmap='gray')
+    plt.axis('off')
+    plt.tight_layout()
+    plt.show()
+
 def compute_redness_index(R, G):
+    """
+    Computes a redness index from the Red and Green channels.
+
+    Args:
+        R (NumPy array): Red channel.
+        G (NumPy array): Green channel.
+
+    Returns:
+        NumPy array: The redness index image.
+    """
     R_f = R.astype(np.float32)
     G_f = G.astype(np.float32)
     redness_index = (R_f - G_f) / (R_f + G_f + 1e-5)
     redness_index_norm = cv2.normalize(redness_index, None, 0, 255, cv2.NORM_MINMAX)
     redness_index_uint8 = redness_index_norm.astype(np.uint8)
+    cv2.imwrite("redness_index.jpg", redness_index_uint8)
     return redness_index_uint8
 
+def display_redness_index(redness_index_uint8):
+    """
+    Displays the redness index image.
+
+    Args:
+        redness_index_uint8 (NumPy array): The redness index image.
+    """
+    plt.imshow(redness_index_uint8, cmap="hot")
+    plt.title("Redness Index (Overwriting Highlighted)")
+    plt.axis("off")
+    plt.show()
+
 def threshold_redness_index(redness_index_uint8, percentile=80):
+    """
+    Thresholds the redness index image.
+
+    Args:
+        redness_index_uint8 (NumPy array): The redness index image.
+        percentile (int, optional): The percentile value for thresholding. Defaults to 80.
+
+    Returns:
+        tuple: The thresholded image and the threshold value.
+    """
     threshold_value = int(np.percentile(redness_index_uint8, percentile))
-    _, redness_thresh = cv2.threshold(redness_index_uint8, threshold_value, 255,
-                                       cv2.THRESH_TOZERO)
+    print(f"Using upper quartile threshold value: {threshold_value}")
+    _, redness_thresh = cv2.threshold(redness_index_uint8, threshold_value, 255, cv2.THRESH_TOZERO)
+    cv2.imwrite("redness_index_thresholded.jpg", redness_thresh)
     return redness_thresh, threshold_value
 
-def find_intensity_threshold(channel, mask, channel_name=""):
-    channel_text_values = channel[mask]
-    hist, _ = np.histogram(channel_text_values, bins=256, range=(0, 256))
-    hist_smooth = np.convolve(hist, np.ones(5) / 5, mode='same')
-    derivative = np.diff(hist_smooth)
+def display_thresholded_index(redness_thresh, threshold_value):
+    """
+    Displays the thresholded redness index image.
+
+    Args:
+        redness_thresh (NumPy array): The thresholded redness index image.
+        threshold_value (int): The threshold value.
+    """
+    plt.imshow(redness_thresh, cmap="hot")
+    plt.title(f"Thresholded Redness Index (>= {threshold_value})")
+    plt.axis("off")
+    plt.show()
+
+def find_intensity_threshold(R, mask):
+    """
+    Finds an intensity threshold to separate overwriting and underwriting text.
+
+    Args:
+        R (NumPy array): Red channel.
+        mask (NumPy array): Mask indicating text regions.
+
+    Returns:
+        tuple: The intensity threshold and the smoothed histogram.
+    """
+    red_text_values = R[mask]
+    hist, bins = np.histogram(red_text_values, bins=256, range=(0, 256))
+    hist_smooth = np.convolve(hist, np.ones(5)/5, mode='same')
+
     local_mins = []
-    for i in range(1, len(derivative)):
-        if derivative[i - 1] < 0 and derivative[i] > 0:
+    for i in range(1, len(hist_smooth)-1):
+        if hist_smooth[i-1] > hist_smooth[i] < hist_smooth[i+1]:
             local_mins.append((i, hist_smooth[i]))
-    valid_mins = [(pos, val) for pos, val in local_mins if 30 < pos < 220]
-    if channel_name.lower() == "green":
-        print(f"validmins (Green): {valid_mins}")
-        if len(valid_mins) > 2:
-            split_thresh = valid_mins[2][0]
-        elif len(valid_mins) > 1:
-            split_thresh = valid_mins[1][0]
-        elif len(valid_mins) == 1:
-            split_thresh = valid_mins[0][0]
-        else:
-            split_thresh = np.median(channel_text_values)
-    elif valid_mins:
+
+    valid_mins = [(pos, val) for pos, val in local_mins
+                    if val < np.mean(hist_smooth) and 30 < pos < 220]
+
+    if valid_mins:
+        valid_mins.sort(key=lambda x: x[1])
         split_thresh = valid_mins[0][0]
     else:
-        split_thresh = np.median(channel_text_values)
-    print(f"[{channel_name}] Intensity threshold: {split_thresh}")
-    return split_thresh, hist_smooth, valid_mins
+        split_thresh = np.median(red_text_values)
 
-def separate_text_layers(R, G, B, mask_R, mask_G, mask_B, split_thresh_R,
-                        split_thresh_G, split_thresh_B):
-    overwriting_mask_r = (R < split_thresh_R) & mask_R
-    underwriting_mask_r = (R >= split_thresh_R) & mask_R
+    print(f"Intensity threshold between two writings: {split_thresh}")
+    return split_thresh, hist_smooth
 
-    overwriting_r = np.zeros_like(R)
-    overwriting_r[overwriting_mask_r] = R[overwriting_mask_r]
-    underwriting_r = np.zeros_like(R)
-    underwriting_r[underwriting_mask_r] = R[underwriting_mask_r]
+def separate_text_layers(R, mask, split_thresh):
+    """
+    Separates the Red channel into overwriting and underwriting layers based on a threshold.
 
-    overwriting_mask_g = (G < split_thresh_G) & mask_G
-    underwriting_mask_g = (G >= split_thresh_G) & mask_G
+    Args:
+        R (NumPy array): Red channel.
+        mask (NumPy array): Mask indicating text regions.
+        split_thresh (int): Intensity threshold.
 
-    overwriting_g = np.zeros_like(G)
-    overwriting_g[overwriting_mask_g] = G[overwriting_mask_g]
-    underwriting_g = np.zeros_like(G)
-    underwriting_g[underwriting_mask_g] = G[underwriting_mask_g]
+    Returns:
+        tuple: Overwriting and underwriting images, and their corresponding masks.
+    """
+    overwriting_mask = (R < split_thresh) & mask
+    underwriting_mask = (R >= split_thresh) & mask
 
-    overwriting_mask_b = (B < split_thresh_B) & mask_B
-    underwriting_mask_b = (B >= split_thresh_B) & mask_B
+    overwriting = np.zeros_like(R)
+    overwriting[overwriting_mask] = R[overwriting_mask]
+    underwriting = np.zeros_like(R)
+    underwriting[underwriting_mask] = R[underwriting_mask]
 
-    overwriting_b = np.zeros_like(B)
-    overwriting_b[overwriting_mask_b] = B[overwriting_mask_b]
-    underwriting_b = np.zeros_like(B)
-    underwriting_b[underwriting_mask_b] = B[underwriting_mask_b]
+    cv2.imwrite("overwriting_red.jpg", overwriting)
+    cv2.imwrite("underwriting_red.jpg", underwriting)
 
-    return overwriting_r, underwriting_r, overwriting_mask_r, underwriting_mask_r, overwriting_g, underwriting_g, overwriting_mask_g, underwriting_mask_g, overwriting_b, underwriting_b, overwriting_mask_b, underwriting_mask_b
+    return overwriting, underwriting, overwriting_mask, underwriting_mask
 
-def display_separated_texts(overwriting_r, underwriting_r):
-    plt.figure(figsize=(10, 5))
+def display_separated_texts(overwriting, underwriting):
+    """
+    Displays the separated overwriting and underwriting text layers.
+
+    Args:
+        overwriting (NumPy array): Overwriting text layer.
+        underwriting (NumPy array): Underwriting text layer.
+    """
+    plt.figure(figsize=(10, 4))
     plt.subplot(1, 2, 1)
-    plt.title("Low Red Values (Overwriting)")
-    plt.imshow(overwriting_r, cmap='gray')
+    plt.title("Overwriting (Darker Red)")
+    plt.imshow(overwriting, cmap='gray')
     plt.axis('off')
     plt.subplot(1, 2, 2)
-    plt.title("High Red Values (Underwriting)")
-    plt.imshow(underwriting_r, cmap='gray')
+    plt.title("Underwriting (Lighter Red)")
+    plt.imshow(underwriting, cmap='gray')
     plt.axis('off')
     plt.tight_layout()
     plt.show()
 
-def display_histogram(hist_smooth, split_thresh, channel, valid_mins=None):
+def display_histogram(hist_smooth, split_thresh):
+    """
+    Displays the histogram of red values in the text regions, along with the threshold.
+
+    Args:
+        hist_smooth (NumPy array): Smoothed histogram.
+        split_thresh (int): Intensity threshold.
+    """
     plt.figure(figsize=(12, 6))
     plt.plot(hist_smooth, color='blue')
     plt.axvline(x=split_thresh, color='red', linestyle='--')
-    if valid_mins:
-        for min_pos, min_val in valid_mins:
-            plt.plot(min_pos, min_val, 'go')
-    plt.title(f"Smoothed Histogram of {channel} Channel with Threshold = {split_thresh}")
+    plt.title(f"Smoothed Histogram of Red Values in Text Regions (Threshold = {split_thresh})")
     plt.xlabel("Pixel Intensity")
     plt.ylabel("Frequency")
     plt.show()
 
-def get_pixel_rgb(event, x, y, flags, param):
-    if event == cv2.EVENT_LBUTTONDOWN:
-        global R, G, B
-        r = R[y, x]
-        g = G[y, x]
-        b = B[y, x]
-        print(f"Pixel coordinates: ({x}, {y})  RGB values: ({r}, {g}, {b})")
+def create_color_visualization(R, overwriting_mask, underwriting_mask):
+    """
+    Creates a color visualization of the separated text layers.
 
-def calculate_text_mask(R,G,B, r_thresh_low, r_thresh_high, g_thresh_low, g_thresh_high, b_thresh_low, b_thresh_high):
-    return (R > r_thresh_low) & (R < r_thresh_high) & (G > g_thresh_low) & (G < g_thresh_high) & (B > b_thresh_low) & (B < b_thresh_high)
+    Args:
+        R (NumPy array): Red channel.
+        overwriting_mask (NumPy array): Mask for overwriting text.
+        underwriting_mask (NumPy array): Mask for underwriting text.
 
-def main(image_path):
-    global R, G, B
+    Returns:
+        NumPy array: Color visualization image.
+    """
+    color_visualization = np.zeros((R.shape[0], R.shape[1], 3), dtype=np.uint8)
+    color_visualization[overwriting_mask] = [255, 0, 0]  # Red for overwriting
+    color_visualization[underwriting_mask] = [0, 0, 255]  # Blue for underwriting
+
+    cv2.imwrite("text_layers_color_coded.jpg", cv2.cvtColor(color_visualization, cv2.COLOR_RGB2BGR))
+    return color_visualization
+
+def display_color_visualization(color_visualization):
+    """
+    Displays the color visualization of the separated text layers.
+
+    Args:
+        color_visualization (NumPy array): Color visualization image.
+    """
+    plt.figure(figsize=(10, 8))
+    plt.imshow(color_visualization)
+    plt.title("Color-Coded Text Layers (Red = Overwriting, Blue = Underwriting)")
+    plt.axis("off")
+    plt.tight_layout()
+    plt.show()
+
+def process_palimpsest(image_path):
+    """
+    Processes a palimpsest image to separate overwriting and underwriting text.
+
+    Args:
+        image_path (str): Path to the palimpsest image.
+
+    Returns:
+        dict: A dictionary containing the processed results.
+    """
     print("Loading and splitting image...")
     R, G, B, image_rgb = load_and_split_image(image_path)
+    display_channels(R, G, B)
 
     print("Computing redness index for overwriting text...")
     redness_index_uint8 = compute_redness_index(R, G)
+    display_redness_index(redness_index_uint8)
 
-    redness_thresh, threshold_value = threshold_redness_index(
-        redness_index_uint8)
+    redness_thresh, threshold_value = threshold_redness_index(redness_index_uint8)
+    display_thresholded_index(redness_thresh, threshold_value)
 
     print("Finding intensity threshold for text separation...")
-    mask_R = redness_thresh > 0
-    split_thresh_R, hist_smooth_R, valid_mins_R = find_intensity_threshold(
-        R, mask_R, channel_name="Red")
-    split_thresh_G, hist_smooth_G, valid_mins_G = find_intensity_threshold(
-        G, mask_R, channel_name="Green")
-    split_thresh_B, hist_smooth_B, valid_mins_B = find_intensity_threshold(
-        B, mask_R, channel_name="Blue")
-    
-    mask_G = mask_R.copy() #added
-    mask_B = mask_R.copy() #added
-
-    plt.figure(figsize=(12, 6))
-    plt.plot(hist_smooth_R, color='red', label='Red Channel')
-    plt.axvline(x=split_thresh_R, color='red', linestyle='--')
-    plt.plot(hist_smooth_G, color='green', label='Green Channel')
-    plt.axvline(x=split_thresh_G, color='green', linestyle='--')
-    plt.plot(hist_smooth_B, color='blue', label='Blue Channel')
-    plt.axvline(x=split_thresh_B, color='blue', linestyle='--')
-    plt.title("Smoothed Histograms of RGB Channels")
-    plt.xlabel("Pixel Intensity")
-    plt.ylabel("Frequency")
-    plt.legend()
-    plt.show()
+    mask = redness_thresh > 0
+    split_thresh, hist_smooth = find_intensity_threshold(R, mask)
 
     print("Separating text layers based on intensity threshold...")
-    (overwriting_r, underwriting_r, overwriting_mask_r, underwriting_mask_r,
-     overwriting_g, underwriting_g, overwriting_mask_g, underwriting_mask_g,
-     overwriting_b, underwriting_b, overwriting_mask_b, underwriting_mask_b) = separate_text_layers(
-        R, G, B, mask_R, mask_G, mask_B, split_thresh_R, split_thresh_G, split_thresh_B) # Pass mask_B
+    overwriting, underwriting, overwriting_mask, underwriting_mask = separate_text_layers(R, mask, split_thresh)
+    display_separated_texts(overwriting, underwriting)
 
-    display_separated_texts(overwriting_r, underwriting_r)
-    #cv2.namedWindow('Original Image')
-    #cv2.setMouseCallback('Original Image', get_pixel_rgb)
-    #cv2.imshow('Original Image', cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR))
-    #cv2.waitKey(0)
-    #cv2.destroyAllWindows()
+    display_histogram(hist_smooth, split_thresh)
 
-    print("Saving low red values (overwriting) as overwriting_text_vertical...")
-    overwriting_text_vertical = overwriting_r.copy()
-    cv2.imwrite('overwriting_text_vertical.jpg', overwriting_text_vertical)
+    color_visualization = create_color_visualization(R, overwriting_mask, underwriting_mask)
+    display_color_visualization(color_visualization)
 
-    # Now, let's try to extract the horizontal text.
-    print("Separating text layers for horizontal text...")
-    (overwriting_r_horizontal, underwriting_r_horizontal, overwriting_mask_r_horizontal, underwriting_mask_r_horizontal,
-     overwriting_g_horizontal, underwriting_g_horizontal, overwriting_mask_g_horizontal, underwriting_mask_g_horizontal,
-     overwriting_b_horizontal, underwriting_b_horizontal, overwriting_mask_b_horizontal, underwriting_mask_b_horizontal) = separate_text_layers(
-        R, G, B, ~mask_R, ~mask_G, ~mask_B, split_thresh_R, split_thresh_G, split_thresh_B)
+    return {
+        'red_channel': R,
+        'redness_index': redness_index_uint8,
+        'overwriting': overwriting,
+        'underwriting': underwriting,
+        'color_visualization': color_visualization
+    }
 
-    print("Saving high red values (underwriting) as overwriting_text_horizontal...")
-    overwriting_text_horizontal = underwriting_r_horizontal.copy()
-    cv2.imwrite('overwriting_text_horizontal.jpg', overwriting_text_horizontal)
+def separate_palimpsest(image_path, output_dir='results', manual_channel_selection=None, manual_scale_factor=None):
+    """
+    A simplified approach to separate underwriting in palimpsest images using RGB channel analysis
 
-    # New attempt to extract horizontal text
-    r_thresh_low = 160
-    r_thresh_high = 210
-    g_thresh_low = 90
-    g_thresh_high = 130
-    b_thresh_low = 0
-    b_thresh_high = 45
-    horizontal_text_mask = calculate_text_mask(R,G,B, r_thresh_low, r_thresh_high, g_thresh_low, g_thresh_high, b_thresh_low, b_thresh_high)
-    horizontal_text = np.zeros_like(R)
-    horizontal_text[horizontal_text_mask] = R[horizontal_text_mask]
-    cv2.imwrite('horizontal_text.jpg', horizontal_text)
-    
-    #show the horizontal text mask
-    cv2.imwrite('horizontal_text_mask.jpg', horizontal_text_mask.astype(np.uint8) * 255)
-    
-    #Display the horizontal text mask
-    plt.figure(figsize=(12, 6))
-    plt.imshow(horizontal_text_mask, cmap='gray')
-    plt.title("Horizontal Text Mask")
-    plt.xlabel("Pixel Column")
-    plt.ylabel("Pixel Row")
-    plt.show()
-    
-    # Display the extracted horizontal text
-    plt.figure(figsize=(12, 6))
-    plt.imshow(horizontal_text, cmap='gray')
-    plt.title("Extracted Horizontal Text")
-    plt.xlabel("Pixel Column")
-    plt.ylabel("Pixel Row")
-    plt.show()
+    Parameters:
+    -----------
+    image_path : str
+        Path to the input palimpsest image
+    output_dir : str
+        Directory to save output images
+    manual_channel_selection : tuple or None
+        Manually specify which channels to use (e.g., ('R', 'G') or ('B', 'R'))
+        If None, will automatically select based on analysis
+    manual_scale_factor : float or None
+        Manually specify the scale factor between channels
+        If None, will compute based on image statistics
+    """
+    # Create output directory
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
 
+    # Load image
+    img = cv2.imread(image_path)
+    if img is None:
+        raise ValueError(f"Could not load image from {image_path}")
+
+    # Convert from BGR (OpenCV default) to RGB for easier handling
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+    # Split into RGB channels
+    b_channel, g_channel, r_channel = cv2.split(img)  # OpenCV returns BGR
+
+    # Save individual channels for inspection
+    cv2.imwrite(f"{output_dir}/r_channel.png", r_channel)
+    cv2.imwrite(f"{output_dir}/g_channel.png", g_channel)
+    cv2.imwrite(f"{output_dir}/b_channel.png", b_channel)
+
+    # -------------------------------------------------------------
+    # STEP 1: Visualize histograms to help with manual adjustments
+    # -------------------------------------------------------------
+    plt.figure(figsize=(15, 5))
+
+    plt.subplot(1, 3, 1)
+    plt.hist(r_channel.ravel(), 256, [0, 256], color='red', alpha=0.7)
+    plt.title('Red Channel Histogram')
+
+    plt.subplot(1, 3, 2)
+    plt.hist(g_channel.ravel(), 256, [0, 256], color='green', alpha=0.7)
+    plt.title('Green Channel Histogram')
+
+    plt.subplot(1, 3, 3)
+    plt.hist(b_channel.ravel(), 256, [0, 256], color='blue', alpha=0.7)
+    plt.title('Blue Channel Histogram')
+
+    plt.tight_layout()
+    plt.savefig(f"{output_dir}/channel_histograms.png")
+
+    # -------------------------------------------------------------
+    # STEP 2: Select channels to work with
+    # -------------------------------------------------------------
+    channel_dict = {'R': r_channel, 'G': g_channel, 'B': b_channel}
+
+    if manual_channel_selection:
+        # Use manually specified channels
+        channel1_name, channel2_name = manual_channel_selection
+        channel1 = channel_dict[channel1_name]
+        channel2 = channel_dict[channel2_name]
+        print(f"Using manually selected channels: {channel1_name} and {channel2_name}")
+    else:
+        # Auto-select based on standard deviation (higher std = more information)
+        std_values = {
+            'R': np.std(r_channel),
+            'G': np.std(g_channel),
+            'B': np.std(b_channel)
+        }
+
+        # Find the two channels with highest standard deviation
+        channels_sorted = sorted(std_values.items(), key=lambda x: x[1], reverse=True)
+        channel1_name, _ = channels_sorted[0]
+        channel2_name, _ = channels_sorted[1]
+
+        channel1 = channel_dict[channel1_name]
+        channel2 = channel_dict[channel2_name]
+
+        print(f"Automatically selected channels based on standard deviation:")
+        print(f"Channel STD values - R: {std_values['R']:.2f}, G: {std_values['G']:.2f}, B: {std_values['B']:.2f}")
+        print(f"Selected: {channel1_name} and {channel2_name}")
+
+    # -------------------------------------------------------------
+    # STEP 3: Determine scaling factor
+    # -------------------------------------------------------------
+    if manual_scale_factor is not None:
+        scale_factor = manual_scale_factor
+        print(f"Using manually specified scale factor: {scale_factor}")
+    else:
+        # Calculate scale factor to match the means of the two channels
+        # This is a starting point - you'll likely need to adjust this
+        mean1 = np.mean(channel1)
+        mean2 = np.mean(channel2)
+
+        # Prevent division by zero
+        if mean2 == 0:
+            scale_factor = 1.0
+        else:
+            scale_factor = mean1 / mean2
+
+        print(f"Calculated scale factor: {scale_factor:.4f}")
+        print(f"Channel means - {channel1_name}: {mean1:.2f}, {channel2_name}: {mean2:.2f}")
+
+    # -------------------------------------------------------------
+    # STEP 4: Create multiple difference images with different scale factors
+    # -------------------------------------------------------------
+    # Create a range of scale factors around the calculated one
+    if manual_scale_factor is None:
+        scale_factors = [scale_factor * x for x in [0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3]]
+    else:
+        scale_factors = [manual_scale_factor]
+
+    for idx, sf in enumerate(scale_factors):
+        # Apply scaling and calculate difference
+        channel1_float = channel1.astype(np.float32)
+        channel2_scaled = channel2.astype(np.float32) * sf
+
+        # Try both subtraction directions
+        diff1 = cv2.absdiff(channel1_float, channel2_scaled)
+        diff2 = cv2.absdiff(channel2_scaled, channel1_float)
+
+        # Normalize to 0-255
+        diff1_norm = cv2.normalize(diff1, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        diff2_norm = cv2.normalize(diff2, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+
+        # Save difference images
+        cv2.imwrite(f"{output_dir}/diff_{channel1_name}_{channel2_name}_sf{sf:.2f}.png", diff1_norm)
+        cv2.imwrite(f"{output_dir}/diff_{channel2_name}_{channel1_name}_sf{sf:.2f}.png", diff2_norm)
+
+        # Create enhanced versions using contrast stretching
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        diff1_enhanced = clahe.apply(diff1_norm)
+        diff2_enhanced = clahe.apply(diff2_norm)
+
+        cv2.imwrite(f"{output_dir}/diff_enhanced_{channel1_name}_{channel2_name}_sf{sf:.2f}.png", diff1_enhanced)
+        cv2.imwrite(f"{output_dir}/diff_enhanced_{channel2_name}_{channel1_name}_sf{sf:.2f}.png", diff2_enhanced)
+
+        # Create inverted versions (sometimes better for visibility)
+        cv2.imwrite(f"{output_dir}/diff_inv_{channel1_name}_{channel2_name}_sf{sf:.2f}.png", 255 - diff1_norm)
+        cv2.imwrite(f"{output_dir}/diff_inv_{channel2_name}_{channel1_name}_sf{sf:.2f}.png", 255 - diff2_norm)
+
+        # If it's the main scale factor, create a more comprehensive visualization
+        if idx == len(scale_factors) // 2 or len(scale_factors) == 1:
+            # Create a visualization of results
+            plt.figure(figsize=(15, 10))
+
+            plt.subplot(2, 3, 1)
+            plt.imshow(img_rgb)
+            plt.title("Original Image")
+
+            plt.subplot(2, 3, 2)
+            plt.imshow(channel1, cmap='gray')
+            plt.title(f"{channel1_name} Channel")
+
+            plt.subplot(2, 3, 3)
+            plt.imshow(channel2, cmap='gray')
+            plt.title(f"{channel2_name} Channel")
+
+            plt.subplot(2, 3, 4)
+            plt.imshow(diff1_norm, cmap='gray')
+            plt.title(f"Diff ({channel1_name} - {channel2_name}*{sf:.2f})")
+
+            plt.subplot(2, 3, 5)
+            plt.imshow(diff1_enhanced, cmap='gray')
+            plt.title("Enhanced Difference")
+
+            plt.subplot(2, 3, 6)
+            plt.imshow(255 - diff1_norm, cmap='gray')
+            plt.title("Inverted Difference")
+
+            plt.tight_layout()
+            plt.savefig(f"{output_dir}/comparison_sf{sf:.2f}.png")
+
+    # -------------------------------------------------------------
+    # STEP 5: Create interactive comparison of different scale factors (optional)
+    # -------------------------------------------------------------
+    if len(scale_factors) > 1:
+        fig, axes = plt.subplots(len(scale_factors), 2, figsize=(12, 3*len(scale_factors)))
+
+        for i, sf in enumerate(scale_factors):
+            axes[i, 0].imshow(cv2.imread(f"{output_dir}/diff_{channel1_name}_{channel2_name}_sf{sf:.2f}.png"), cmap='gray')
+            axes[i, 0].set_title(f"Scale Factor: {sf:.2f}")
+
+            axes[i, 1].imshow(cv2.imread(f"{output_dir}/diff_enhanced_{channel1_name}_{channel2_name}_sf{sf:.2f}.png"), cmap='gray')
+            axes[i, 1].set_title(f"Enhanced, Scale Factor: {sf:.2f}")
+
+        plt.tight_layout()
+        plt.savefig(f"{output_dir}/scale_factor_comparison.png")
+
+    print("\nProcessing complete. Results saved to '{output_dir}' directory.")
+    print("Examine the generated images to find the best scale factor and subtraction direction for your palimpsest.")
+    print("Tips for getting better results:")
+    print("1. Try different channel combinations (R-G, R-B, G-B)")
+    print("2. Adjust the scale factor manually")
+    print("3. Check both subtraction directions")
+    print("4. Look at the enhanced and inverted versions")
 
 if __name__ == "__main__":
-    image_path = 'palimpsest-2025.jpg'
-    main(image_path)
+    # Replace with your image path
+    image_path = "palimpsest-2025.jpg"
+
+    # Example 1: Let the algorithm choose channels automatically
+    separate_palimpsest(image_path, output_dir="palimpsest_results_auto")
+
+    # Example 2: Manually specify channels and scale factor
+    # separate_palimpsest(
+    #     image_path,
+    #     output_dir="palimpsest_results_manual",
+    #     manual_channel_selection=('R', 'B'),  # Try different combinations
+    #     manual_scale_factor=1.2  # Adjust this value
+    # )
+
+    results = process_palimpsest('palimpsest-2025.jpg')
