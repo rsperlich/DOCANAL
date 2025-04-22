@@ -1,8 +1,9 @@
 import os
+from pathlib import Path
+
 import cv2 as cv
 import numpy as np
 from scipy.ndimage import generic_filter
-from pathlib import Path
 from skimage.morphology import skeletonize
 
 """
@@ -171,10 +172,10 @@ def main() -> None:
 
     test_metrics(f"part2_images/")
     
-    
+
 
 if __name__ == "__main__":
     main()
-    #import torch
-    #net = torch.hub.load('milesial/Pytorch-UNet', 'unet_carvana', pretrained=True, scale=0.5)
+    import torch
+    net = torch.hub.load('milesial/Pytorch-UNet', 'unet_carvana', pretrained=True, scale=0.5)
 
