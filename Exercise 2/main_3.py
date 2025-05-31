@@ -20,7 +20,10 @@ def load_text_from_ocr(directory_path: str) -> dict:
 
 
 def run_spacy_ner(text_data: dict):
-    print("\n--- Running spaCy Named Entity Recognition ---")
+    print("\n--- Running spaCy Named Entity Recognition for Report ---")
+    output_dir = "spacy_report_outputs"
+    os.makedirs(output_dir, exist_ok=True)
+
     try:
         nlp = spacy.load("de_core_news_md")
     except OSError:
@@ -31,61 +34,97 @@ def run_spacy_ner(text_data: dict):
     entity_vectors_by_type = defaultdict(list)
     word_labels = []
     entity_texts_by_type = defaultdict(list)
+    
+    # Store extracted entities for easy reporting
+    extracted_entities_report = []
+    similar_words_report = []
 
     for doc_name, text in text_data.items():
         doc = nlp(text)
-        print(f"\nProcessing document: {doc_name}")
-
+        print(f"\nProcessing document for spaCy NER: {doc_name}")
+        
+        doc_entities = {"document": doc_name, "entities": []}
         print("Entities found:")
         for ent in doc.ents:
             print(f"  - {ent.text} ({ent.label_})")
+            doc_entities["entities"].append({"text": ent.text, "label": ent.label_})
             if ent.has_vector:
                 entity_vectors_by_type[ent.label_].append(ent.vector)
                 entity_texts_by_type[ent.label_].append(ent.text)
+        extracted_entities_report.append(doc_entities)
         
         for token in doc:
             if token.has_vector and not token.is_punct and not token.is_space and token.text.strip() != "":
                 all_word_vectors.append(token.vector)
                 word_labels.append(token.text)
 
-
         print("\nSimilar words (examples):")
         target_words = ["Standort", "Datum", "Fotograf", "Museum"]
+        current_doc_similar_words = {"document": doc_name, "similar_words": []}
         for word_str in target_words:
             if word_str in nlp.vocab and nlp.vocab[word_str].has_vector:
                 ms = nlp.vocab.vectors.most_similar(np.asarray([nlp.vocab[word_str].vector]), n=5)
                 similar_words = [nlp.vocab.strings[w_id] for w_id in ms[0][0]]
                 print(f"  - Words similar to '{word_str}': {', '.join(similar_words)}")
+                current_doc_similar_words["similar_words"].append({
+                    "target_word": word_str,
+                    "similarities": similar_words
+                })
             else:
                 print(f"  - '{word_str}' not found or has no vector in vocabulary for similarity search.")
+        similar_words_report.append(current_doc_similar_words)
 
+    # Save extracted entities to a JSON file
+    with open(os.path.join(output_dir, "extracted_entities.json"), "w", encoding="utf-8") as f:
+        json.dump(extracted_entities_report, f, indent=2, ensure_ascii=False)
+    print(f"\nExtracted entities saved to {os.path.join(output_dir, 'extracted_entities.json')}")
 
+    # Save similar words to a JSON file
+    with open(os.path.join(output_dir, "similar_words.json"), "w", encoding="utf-8") as f:
+        json.dump(similar_words_report, f, indent=2, ensure_ascii=False)
+    print(f"Similar words saved to {os.path.join(output_dir, 'similar_words.json')}")
+
+    # --- t-SNE Visualization for All Word Vectors ---
     if all_word_vectors and len(all_word_vectors) > 1:
         tsne_model_all = TSNE(n_components=2, random_state=0, perplexity=min(30, len(all_word_vectors) - 1))
-        np.seterr(all='ignore')
-        all_word_vectors_array = np.array(all_word_vectors)
-        all_word_vectors_array = all_word_vectors_array[~np.isnan(all_word_vectors_array).any(axis=1) & ~np.isinf(all_word_vectors_array).any(axis=1)]
+        np.seterr(all='ignore') # Ignore numpy warnings for t-SNE
         
+        all_word_vectors_array = np.array(all_word_vectors)
+        # Filter out NaN/Inf values before t-SNE
+        valid_indices = ~np.isnan(all_word_vectors_array).any(axis=1) & ~np.isinf(all_word_vectors_array).any(axis=1)
+        all_word_vectors_array = all_word_vectors_array[valid_indices]
+        valid_word_labels = [label for i, label in enumerate(word_labels) if valid_indices[i]]
+
+
         if all_word_vectors_array.shape[0] > 1:
-            tsne_all_coords = tsne_model_all.fit_transform(all_word_vectors_array)
-            print("\nPrepared word vectors for t-SNE visualization.")
-            
-            plt.figure(figsize=(12, 10))
-            plt.scatter(tsne_all_coords[:, 0], tsne_all_coords[:, 1], s=10)
-            plt.title("t-SNE of All Word Vectors")
-            
-            step = max(1, len(tsne_all_coords) // 50)
-            for i, (x, y) in enumerate(tsne_all_coords):
-                if i % step == 0:
-                    plt.annotate(word_labels[i], (x, y), textcoords="offset points", xytext=(5,5), ha='center', fontsize=8)
-            
-            plt.grid(True)
-            plt.show()
+            try:
+                tsne_all_coords = tsne_model_all.fit_transform(all_word_vectors_array)
+                print("\nPrepared word vectors for t-SNE visualization.")
+                
+                plt.figure(figsize=(12, 10))
+                plt.scatter(tsne_all_coords[:, 0], tsne_all_coords[:, 1], s=10)
+                plt.title("t-SNE of All Word Vectors")
+                
+                # Annotate a subset of points to avoid clutter
+                step = max(1, len(tsne_all_coords) // 50) 
+                for i, (x, y) in enumerate(tsne_all_coords):
+                    if i % step == 0:
+                        plt.annotate(valid_word_labels[i], (x, y), textcoords="offset points", xytext=(5,5), ha='center', fontsize=8)
+                
+                plt.grid(True)
+                # Save the plot instead of just showing it
+                plt.savefig(os.path.join(output_dir, "tsne_all_words.png"))
+                print(f"t-SNE plot for all words saved to {os.path.join(output_dir, 'tsne_all_words.png')}")
+                plt.close() # Close the plot to free memory
+            except ValueError as e:
+                print(f"Error generating t-SNE for all word vectors: {e}")
+                print("This can happen if perplexity is too high relative to the number of samples.")
         else:
             print("Not enough valid word vectors for t-SNE visualization after filtering.")
     else:
         print("No word vectors found for t-SNE visualization.")
 
+    # --- t-SNE Visualization for Entity Vectors by Type ---
     for ent_type, vectors in entity_vectors_by_type.items():
         if vectors and len(vectors) > 1:
             perplexity_val = min(30, len(vectors) - 1)
@@ -95,25 +134,38 @@ def run_spacy_ner(text_data: dict):
 
             tsne_model_ent = TSNE(n_components=2, random_state=0, perplexity=perplexity_val)
             vectors_array = np.array(vectors)
-            vectors_array = vectors_array[~np.isnan(vectors_array).any(axis=1) & ~np.isinf(vectors_array).any(axis=1)]
+            # Filter out NaN/Inf values before t-SNE
+            valid_indices = ~np.isnan(vectors_array).any(axis=1) & ~np.isinf(vectors_array).any(axis=1)
+            vectors_array = vectors_array[valid_indices]
+            valid_entity_texts = [text for i, text in enumerate(entity_texts_by_type[ent_type]) if valid_indices[i]]
 
             if vectors_array.shape[0] > 1:
-                tsne_ent_coords = tsne_model_ent.fit_transform(vectors_array)
-                print(f"Prepared '{ent_type}' entity vectors for t-SNE visualization.")
-                
-                plt.figure(figsize=(10, 8))
-                plt.scatter(tsne_ent_coords[:, 0], tsne_ent_coords[:, 1], s=20)
-                plt.title(f"t-SNE of {ent_type} Entity Vectors")
-                
-                for i, (x, y) in enumerate(tsne_ent_coords):
-                    plt.annotate(entity_texts_by_type[ent_type][i], (x, y), textcoords="offset points", xytext=(5,5), ha='center', fontsize=9)
-                
-                plt.grid(True)
-                plt.show()
+                try:
+                    tsne_ent_coords = tsne_model_ent.fit_transform(vectors_array)
+                    print(f"Prepared '{ent_type}' entity vectors for t-SNE visualization.")
+                    
+                    plt.figure(figsize=(10, 8))
+                    plt.scatter(tsne_ent_coords[:, 0], tsne_ent_coords[:, 1], s=20)
+                    plt.title(f"t-SNE of {ent_type} Entity Vectors")
+                    
+                    # Annotate all entity points, or a subset if too many
+                    for i, (x, y) in enumerate(tsne_ent_coords):
+                        plt.annotate(valid_entity_texts[i], (x, y), textcoords="offset points", xytext=(5,5), ha='center', fontsize=9)
+                    
+                    plt.grid(True)
+                    # Save the plot instead of just showing it
+                    plt.savefig(os.path.join(output_dir, f"tsne_{ent_type}_entities.png"))
+                    print(f"t-SNE plot for {ent_type} entities saved to {os.path.join(output_dir, f'tsne_{ent_type}_entities.png')}")
+                    plt.close() # Close the plot to free memory
+                except ValueError as e:
+                    print(f"Error generating t-SNE for '{ent_type}' entity vectors: {e}")
+                    print("This can happen if perplexity is too high relative to the number of samples.")
             else:
                 print(f"Not enough valid '{ent_type}' entity vectors for t-SNE visualization after filtering.")
         else:
-            print(f"Not enough '{ent_type}' entity vectors for t-SNE visualization.")
+            print(f"No '{ent_type}' entity vectors found for t-SNE visualization.")
+            
+    print("\n--- spaCy Task C (3a) Processing Complete ---")
 
 
 def run_llm_ner(text_data: dict):
@@ -122,7 +174,6 @@ def run_llm_ner(text_data: dict):
     llm_output_directory = "llm_output_jsons/"
     os.makedirs(llm_output_directory, exist_ok=True)
 
-    # Changed to TinyLlama for faster computation
     local_model_path = "TinyLlama/TinyLlama-1.1B-Chat-v1.0" 
     huggingface_token = "" # Your Hugging Face token
 
@@ -268,9 +319,9 @@ def main():
 
     run_spacy_ner(text_data)
 
-    run_llm_ner(text_data) 
+    #run_llm_ner(text_data) 
 
-    evaluate_llm_outputs(llm_output_directory)
+    #evaluate_llm_outputs(llm_output_directory)
 
     print("\n--- Task C Complete ---")
 
