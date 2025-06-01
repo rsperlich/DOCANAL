@@ -3,7 +3,14 @@
 # Task B: OCR
 #
 # Goal: Text recognition using Tesseract
-
+#
+# Prerequisits
+# -) Execute main_1.py
+# 
+# Execution
+# python main_2.py --tesseract-all
+#
+# For single binarization or single folder tesseract, there are command line options
 
 import os
 import numpy as np
@@ -71,7 +78,9 @@ def binarization(file_path: str) -> None:
 
 def run_tesseract() -> None:
     cropped_path = "cropped_images/"
-    os.makedirs(cropped_path)
+    os.makedirs(cropped_path, exist_ok=True)
+    os.makedirs(f"{cropped_path}binarized_otsu/", exist_ok=True)
+    os.makedirs(f"{cropped_path}binarized_sue/", exist_ok=True)
 
     for file_name in sorted(os.listdir(cropped_path)):
         file_path = f"{cropped_path}{file_name}"
@@ -83,7 +92,7 @@ def run_tesseract() -> None:
 
         txt_file_path = f"{cropped_path}txt_color/{file_name[:-4]}"
         print(f"tesseract {file_path} {txt_file_path}")
-        os.makedirs(f"{cropped_path}txt_color/")
+        os.makedirs(f"{cropped_path}txt_color/", exist_ok=True)
         os.system(f"tesseract {file_path} {txt_file_path}")
 
         # Otsu Binarize
@@ -93,7 +102,7 @@ def run_tesseract() -> None:
         cv.imwrite(file_path_binarized, image)
         txt_file_path = f"{cropped_path}txt_binarized_otsu/{file_name[:-4]}"
         print(f"binarized otsu - tesseract {file_path_binarized} {txt_file_path}")
-        os.makedirs(f"{cropped_path}txt_binarized_otsu/")
+        os.makedirs(f"{cropped_path}txt_binarized_otsu/", exist_ok=True)
         os.system(f"tesseract {file_path_binarized} {txt_file_path}")
 
         # Sue Binarize
@@ -102,7 +111,7 @@ def run_tesseract() -> None:
         image = cv.imread(file_path_binarized_sue, cv.IMREAD_GRAYSCALE)
         txt_file_path = f"{cropped_path}txt_binarized_sue/{file_name[:-4]}"
         print(f"binarized sue - tesseract {file_path_binarized_sue} {txt_file_path}")
-        os.makedirs(f"{cropped_path}txt_binarized_sue/")
+        os.makedirs(f"{cropped_path}txt_binarized_sue/", exist_ok=True)
         os.system(f"tesseract {file_path_binarized_sue} {txt_file_path}")
 
         # PSM using Sue et al.
@@ -110,13 +119,13 @@ def run_tesseract() -> None:
         file_path_binarized_sue = f"{cropped_path}binarized_sue/{file_name}"
         txt_file_path = f"{cropped_path}txt_binarized_sue_psm1/{file_name[:-4]}"
         print(f"tesseract {file_path_binarized_sue} {txt_file_path} --psm 1")
-        os.makedirs(f"{cropped_path}txt_binarized_sue_psm1/")
+        os.makedirs(f"{cropped_path}txt_binarized_sue_psm1/", exist_ok=True)
         os.system(f"tesseract {file_path_binarized_sue} {txt_file_path} --psm 1")
 
         # PSM 4 - Assume a single column of text of variable sizes.
         txt_file_path = f"{cropped_path}txt_binarized_sue_psm4/{file_name[:-4]}"
         print(f"tesseract {file_path_binarized_sue} {txt_file_path} --psm 4")
-        os.makedirs(f"{cropped_path}txt_binarized_sue_psm4/")
+        os.makedirs(f"{cropped_path}txt_binarized_sue_psm4/", exist_ok=True)
         os.system(f"tesseract {file_path_binarized_sue} {txt_file_path} --psm 4")
 
 
@@ -132,35 +141,35 @@ def run_tesseract() -> None:
         # Default PSM is 3
         txt_file_path = f"{cropped_path}txt_full_images/{file_name[:-4]}"
         print(f"tesseract {file_path} {txt_file_path}")
-        os.makedirs(f"{cropped_path}txt_full_images//")
+        os.makedirs(f"{cropped_path}txt_full_images//", exist_ok=True)
         os.system(f"tesseract {file_path} {txt_file_path}")
 
         # PSM 0 - Orientation and script detection (OSD) only.
         txt_file_path = f"{cropped_path}txt_full_images_psm0/{file_name[:-4]}"
         print(f"tesseract {file_path} {txt_file_path} --psm 0")
-        os.makedirs(f"{cropped_path}txt_full_images_psm0/")
+        os.makedirs(f"{cropped_path}txt_full_images_psm0/", exist_ok=True)
         os.system(f"tesseract {file_path} {txt_file_path} --psm 0")
 
         # PSM 1 - Automatic page segmentation with OSD.
         txt_file_path = f"{cropped_path}txt_full_images_psm1/{file_name[:-4]}"
         print(f"tesseract {file_path} {txt_file_path} --psm 1")
-        os.makedirs(f"{cropped_path}txt_full_images_psm1/")
+        os.makedirs(f"{cropped_path}txt_full_images_psm1/", exist_ok=True)
         os.system(f"tesseract {file_path} {txt_file_path} --psm 1")
 
         # PSM 4 - Assume a single column of text of variable sizes.
         txt_file_path = f"{cropped_path}txt_full_images_psm4/{file_name[:-4]}"
         print(f"tesseract {file_path} {txt_file_path} --psm 4")
-        os.makedirs(f"{cropped_path}txt_full_images_psm4/")
+        os.makedirs(f"{cropped_path}txt_full_images_psm4/", exist_ok=True)
         os.system(f"tesseract {file_path} {txt_file_path} --psm 4")
         
         txt_file_path = f"{cropped_path}txt_full_images_psm6/{file_name[:-4]}"
         print(f"tesseract {file_path} {txt_file_path} --psm 6")
-        os.makedirs(f"{cropped_path}txt_full_images_psm6/")
+        os.makedirs(f"{cropped_path}txt_full_images_psm6/", exist_ok=True)
         os.system(f"tesseract {file_path} {txt_file_path} --psm 6")
 
         txt_file_path = f"{cropped_path}txt_full_images_psm11/{file_name[:-4]}"
         print(f"tesseract {file_path} {txt_file_path} --psm 11")
-        os.makedirs(f"{cropped_path}txt_full_images_psm11/")
+        os.makedirs(f"{cropped_path}txt_full_images_psm11/", exist_ok=True)
         os.system(f"tesseract {file_path} {txt_file_path} --psm 11")
 
 

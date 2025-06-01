@@ -3,6 +3,13 @@
 # Task A: Obejct Detection Model (YoloV8)
 #
 # Goal: Extract the printed text of the images
+#
+# Prerequisits
+# -) Add dataset/ folder with images und txt folder
+# -) Add yolo model in Exercise 2 folder
+# 
+# Execution
+# python main_1.py
 
 
 import os
@@ -23,10 +30,16 @@ def main() -> None:
     model = YOLO("yolov8n.pt")
     dataset_path = "dataset/"
 
+    # Creates folder for images cropping
+    cropped_path = "cropped_images/"
+    os.makedirs(cropped_path)
+
     filepaths = []
     for file_name in os.listdir(dataset_path):
         file_path = f"{dataset_path}{file_name}"
         if os.path.isdir(file_path):
+            continue
+        if file_path.startswith("."):
             continue
         filepaths.append(file_path)
 
